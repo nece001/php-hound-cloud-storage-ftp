@@ -4,7 +4,7 @@ namespace Nece\Hound\Cloud\Storage;
 
 use Exception;
 
-class Ftp implements IStorage
+class Ftp extends Storage implements IStorage
 {
     /**
      * FTP 主机地址
@@ -141,6 +141,11 @@ class Ftp implements IStorage
         }
     }
 
+    public function getConnection()
+    {
+        return $this->connection;
+    }
+
     /**
      * @inheritDoc
      */
@@ -158,6 +163,7 @@ class Ftp implements IStorage
      */
     public function isDir(string $path): bool
     {
+        $path = $this->fullPath($path);
         $pwd = ftp_pwd($this->connection);
         if (@ftp_chdir($this->connection, $path)) {
             ftp_chdir($this->connection, $pwd);
@@ -172,6 +178,7 @@ class Ftp implements IStorage
      */
     public function isFile(string $path): bool
     {
+        $path = $this->fullPath($path);
         // ftp_size不存在或是目录时返回-1
         return ftp_size($this->connection, $path) >= 0;
     }
@@ -243,7 +250,6 @@ class Ftp implements IStorage
     {
         $path = $this->fullPath($path);
         if (!$this->exists($path)) {
-
             try {
                 $parts = explode('/', trim($path, '/'));
                 $dir = '';
@@ -254,10 +260,7 @@ class Ftp implements IStorage
                     }
                 }
 
-
                 return true;
-
-
             } catch (Exception $e) {
                 echo $e->getMessage();
                 exit;
@@ -271,19 +274,19 @@ class Ftp implements IStorage
      */
     public function rmdir(string $path): bool
     {
-        $path = $this->fullPath($path);
+        $path = trim(str_replace('\\', '/', $path), '/');
         if ($this->isDir($path)) {
-            $list = $this->scandir($path);
-            foreach ($list as $name) {
-                $full_path = $path . '/' . $name;
+            $full_path = $this->fullPath($path);
+            $list = ftp_nlist($this->connection, $full_path);
 
-                if ($this->isFile($full_path)) {
-                    ftp_delete($this->connection, $full_path);
+            foreach ($list as $name) {
+                if ($this->isFile($name)) {
+                    ftp_delete($this->connection, $name);
                 } else {
-                    $this->rmdir($full_path);
+                    $this->rmdir($name);
                 }
             }
-            ftp_rmdir($this->connection, $path);
+            ftp_rmdir($this->connection, $this->fullPath($path));
         }
         return true;
     }
@@ -291,7 +294,7 @@ class Ftp implements IStorage
     /**
      * @inheritDoc
      */
-    public function scandir(string $path, int $order = Consts::SCANDIR_SORT_ASCENDING): array
+    public function list(string $path, int $order = Consts::SCANDIR_SORT_ASCENDING): array
     {
         $path = $this->fullPath($path);
         $list = ftp_nlist($this->connection, $path);
@@ -299,7 +302,15 @@ class Ftp implements IStorage
         $files = array();
         if ($list) {
             foreach ($list as $name) {
-                $files[] = basename($name);
+                $basename = basename($name);
+
+                $size = ftp_size($this->connection, $name);
+                $is_dir = $size <= 0;
+                $ctime = $is_dir ? 0 : ftp_mdtm($this->connection, $name);
+                $mtime = $ctime;
+                $atime = $ctime;
+
+                $files[] = $this->buildObjectListItem($basename, $size, $is_dir, $ctime, $mtime, $atime);
             }
         }
 
@@ -355,15 +366,14 @@ class Ftp implements IStorage
                 mkdir($local_dst, 0755, true);
             }
 
-            $dir = $this->scandir($src);
-            foreach ($dir as $name) {
-                $ftp_path = $src . '/' . $name;
-                $local_path = $local_dst . DIRECTORY_SEPARATOR . $name;
+            $list = ftp_nlist($this->connection, $src);
+            foreach ($list as $path) {
+                $local_path = $local_dst . DIRECTORY_SEPARATOR . basename($path);
 
-                if ($this->isFile($ftp_path)) {
-                    ftp_get($this->connection, $local_path, $ftp_path, FTP_BINARY);
+                if ($this->isFile($path)) {
+                    ftp_get($this->connection, $local_path, $path, FTP_BINARY);
                 } else {
-                    $this->download($ftp_path, $local_path);
+                    $this->download($path, $local_path);
                 }
             }
         }
@@ -376,7 +386,7 @@ class Ftp implements IStorage
      */
     public function file(string $path): IObject
     {
-        return new FtpObject($this->connection, $this->fullPath($path));
+        return new FtpObject($this, $this->fullPath($path));
     }
 
     /**

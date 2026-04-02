@@ -7,6 +7,13 @@ use FTP\Connection;
 class FtpObject implements IObject
 {
     /**
+     * FTP对象
+     *
+     * @var Ftp
+     */
+    private $ftp;
+
+    /**
      * FTP连接
      *
      * @var Connection
@@ -29,9 +36,10 @@ class FtpObject implements IObject
      * @param Connection $connection FTP连接对象
      * @param string $path 文件路径，包含开头的斜杠
      */
-    public function __construct($connection, string $path)
+    public function __construct(Ftp $ftp, string $path)
     {
-        $this->connection = $connection;
+        $this->ftp = $ftp;
+        $this->connection = $ftp->getConnection();
         $this->path = $path;
     }
 
@@ -157,6 +165,9 @@ class FtpObject implements IObject
      */
     public function putContent(string $content, bool $append = false): bool
     {
+        $dir = dirname($this->path);
+        $this->ftp->mkdir($dir);
+
         $tmp_file = tempnam(sys_get_temp_dir(), 'ftp_put_content_tmp_file_' . rand());
         if ($append) {
             ftp_get($this->connection, $tmp_file,$this->path,  FTP_BINARY);
